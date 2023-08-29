@@ -9,6 +9,9 @@ import (
 	v1 "github.com/hobbyfarm/gargantua/pkg/apis/hobbyfarm.io/v1"
 	"github.com/hobbyfarm/hf-provisioner-ec2/pkg/apis/provisioning.hobbyfarm.io/v1alpha1"
 	ec22 "github.com/hobbyfarm/hf-provisioner-ec2/pkg/ec2"
+	"github.com/pkg/errors"
+	"golang.org/x/crypto/ssh"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"time"
 )
@@ -42,14 +45,34 @@ func WriteVM(req router.Request, resp router.Response) error {
 		vm.Status.Hostname = *ec2Instance.InstanceId
 	}
 
-	switch *ec2Instance.State.Name {
-	case ec2.InstanceStateNameRunning:
-		vm.Status.Status = v1.VmStatusRunning
-	case ec2.InstanceStateNamePending:
-		vm.Status.Status = v1.VmStatusProvisioned
-	case ec2.InstanceStateNameShuttingDown:
-	case ec2.InstanceStateNameStopping:
-		vm.Status.Status = v1.VmStatusTerminating
+	if *ec2Instance.State.Name == ec2.InstanceStateNameRunning {
+		if vm.Spec.Protocol == "ssh" {
+			err := IsSSHReady(req, vm)
+			if err != nil {
+				v1alpha1.ConditionConnectionReady.False(instance)
+				v1alpha1.ConditionConnectionReady.Message(instance, err.Error())
+			} else {
+				v1alpha1.ConditionConnectionReady.True(instance)
+			}
+			vm.Status.Status = v1.VmStatusRunning
+		} else {
+			v1alpha1.ConditionConnectionReady.Unknown(instance)
+			v1alpha1.ConditionConnectionReady.Message(instance, "unsupported protocol for readiness check")
+
+			vm.Status.Status = v1.VmStatusRunning
+		}
+	} else {
+		switch *ec2Instance.State.Name {
+		case ec2.InstanceStateNamePending:
+			vm.Status.Status = v1.VmStatusProvisioned
+		case ec2.InstanceStateNameShuttingDown:
+		case ec2.InstanceStateNameStopping:
+			vm.Status.Status = v1.VmStatusTerminating
+		}
+	}
+
+	if err := req.Client.Status().Update(req.Ctx, instance); err != nil {
+		return errors.Wrap(err, "error updating instance status")
 	}
 
 	return req.Client.Status().Update(req.Ctx, vm)
@@ -100,14 +123,45 @@ func PeriodicUpdate(req router.Request, resp router.Response) error {
 
 		instance.Status.Instance.Raw = instanceJson
 
+		switch *dio.Reservations[0].Instances[0].State.Name {
+		case ec2.InstanceStateNameRunning:
+			resp.RetryAfter(30 * time.Second)
+		case ec2.InstanceStateNamePending:
+			resp.RetryAfter(10 * time.Second)
+		}
+
 		return req.Client.Status().Update(req.Ctx, instance)
 	}
 
-	switch *dio.Reservations[0].Instances[0].State.Name {
-	case ec2.InstanceStateNameRunning:
-		resp.RetryAfter(30 * time.Second)
-	case ec2.InstanceStateNamePending:
-		resp.RetryAfter(10 * time.Second)
+	return nil
+}
+
+func IsSSHReady(req router.Request, vm *v1.VirtualMachine) error {
+	// gather key
+	var secret = &corev1.Secret{}
+	if err := req.Client.Get(req.Ctx, client.ObjectKey{
+		Namespace: vm.GetNamespace(),
+		Name:      vm.Spec.SecretName,
+	}, secret); err != nil {
+		return err
+	}
+
+	privKey, err := ssh.ParsePrivateKey(secret.Data["private_key"])
+	if err != nil {
+		return errors.Wrap(err, "error parsing private key")
+	}
+
+	config := &ssh.ClientConfig{
+		User: vm.Spec.SshUsername,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(privKey),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	}
+
+	_, err = ssh.Dial("tcp", fmt.Sprintf("%s:22", vm.Status.PublicIP), config)
+	if err != nil {
+		return errors.Wrap(err, "error dialing ssh")
 	}
 
 	return nil

@@ -31,21 +31,21 @@ func SecretHandler(req router.Request, resp router.Response) error {
 
 	if len(secretList.Items) == 0 {
 		secret = corev1.Secret{}
+
+		public, private, err := ssh.GenKeyPair()
+		if err != nil {
+			return err
+		}
+
+		secret.Data = map[string][]byte{}
+
+		secret.Data["public_key"] = []byte(public)
+		secret.Data["private_key"] = []byte(private)
+
+		secret.Name = fmt.Sprintf("%s-keys", vm.Name)
 	} else {
 		secret = secretList.Items[0]
 	}
-
-	public, private, err := ssh.GenKeyPair()
-	if err != nil {
-		return err
-	}
-
-	secret.Data = map[string][]byte{}
-
-	secret.Data["public_key"] = []byte(public)
-	secret.Data["private_key"] = []byte(private)
-
-	secret.Name = fmt.Sprintf("%s-keys", vm.Name)
 
 	if len(secret.Labels) == 0 {
 		secret.Labels = map[string]string{}

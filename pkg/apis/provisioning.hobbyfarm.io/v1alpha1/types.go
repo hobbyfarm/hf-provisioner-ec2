@@ -13,6 +13,8 @@ var (
 	ConditionInstanceRunning = condition.Cond("EC2InstanceRunning")
 	ConditionInstanceUpdated = condition.Cond("EC2InstanceUpdated")
 
+	ConditionConnectionReady = condition.Cond("EC2InstanceConnectionReady")
+
 	ConditionKeyPairImported = condition.Cond("KeyExists")
 )
 

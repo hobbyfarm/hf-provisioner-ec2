@@ -13,7 +13,7 @@ metadata:
   name: hf-provisioner-ec2
 rules:
   - apiGroups: ['provisioning.hobbyfarm.io']
-    resources: ['droplets', 'keys', 'droplets/status', 'keys/status']
+    resources: ['instances', 'keypairs', 'instances/status', 'keypairs/status']
     verbs: ['*']
   - apiGroups: ['hobbyfarm.io']
     resources: ['virtualmachines', 'environments', 'virtualmachinetemplates', 'virtualmachines/status']
