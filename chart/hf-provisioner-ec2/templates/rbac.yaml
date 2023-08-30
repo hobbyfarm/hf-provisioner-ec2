@@ -41,7 +41,7 @@ metadata:
   name: hf-provisioner-ec2
 subjects:
   - kind: ServiceAccount
-    name: hf-provisioner-ec2
+    name: {{ include "hf-provisioner-ec2.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 roleRef:
   kind: ClusterRole
